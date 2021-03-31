@@ -3,17 +3,16 @@
     remote_user: centos
     become: yes
     tasks:
-      - name: 
-        dnf:
+      - name: Instalando sshpass 
+        dnf: 
           name: 
             - sshpass 
           state: present
-          update_cache: yes
         
       - name: Copiando archivo joincluster a los workers
         shell:
           cmd: |
-            sshpass -p "kubeadmin" scp -o StrictHostKeyChecking=no master.home.lab:/joincluster.sh /joincluster.sh
+            sshpass -p "centos" scp -o StrictHostKeyChecking=no master.home.lab:/joincluster.sh /joincluster.sh
       
       - name: Uniendo worker al master
         shell:
