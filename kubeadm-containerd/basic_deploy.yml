@@ -1,0 +1,214 @@
+---
+  - hosts: all
+    remote_user: centos
+    become: yes
+
+    tasks:
+      - name: Actualizando sistema
+        dnf:
+          name: "*"
+          state: latest
+
+      - name: Deshabilitando swap de /etc/fstab
+        mount:
+          name: swap
+          fstype: swap
+          state: absent
+
+      - name: SELinux
+        ansible.posix.selinux:
+          state: disabled
+
+      - name: Deshabilitando SELinux
+        ansible.builtin.lineinfile:
+          path: /etc/selinux/config
+          regexp: '^SELINUX='
+          line: SELINUX=disabled
+        notify: reiniciando sistema
+      
+      - name: Verificando si Chrony esta instalado
+        dnf:
+          name: chrony
+          state: present
+
+      - name: Verificando si Chrony se está ejecutando
+        service:
+          name: chronyd
+          state: started
+          enabled: true 
+
+      - name: Verificando si firewalld esta instalado
+        dnf:
+          name: firewalld
+          state: present
+
+      - name: Verificando si firewalld se está ejecutando
+        service:
+          name: firewalld
+          state: started
+          enabled: true     
+            
+      - name: Configurando Zona Horaria America/Santiago
+        timezone:
+          name: America/Santiago
+      
+      - name: Añadiendo entradas a /etc/hosts
+        blockinfile:
+          path: /etc/hosts
+          block: |
+            172.10.10.100 master.home.lab master0
+            172.10.10.110 node1.home.lab node0
+            172.10.10.111 node2.home.lab node1
+            172.10.10.112 node3.home.lab node2
+      
+      - name: Instalando repositorio epel
+        dnf: 
+          name: 
+            - epel-release
+          state: present
+
+      - name: Instalando plugin dnf-plugin-versionlock
+        dnf: 
+          name: 
+            - python3-dnf-plugin-versionlock
+          state: present
+
+      - name: Añandiendo repositorio Docker
+        yum_repository:
+          name: docker
+          description: "Docker CE Stable - $basearch"
+          baseurl: "https://download.docker.com/linux/centos/$releasever/$basearch/stable"
+          enabled: yes
+          gpgcheck: yes
+          gpgkey: https://download.docker.com/linux/centos/gpg        
+
+      - name: Instalando ContainerD
+        dnf:
+          name: 
+            - containerd.io
+          state: present
+      
+      - name: Creando carpeta de configuración de ContainerD
+        ansible.builtin.file:
+          path: /etc/containerd
+          state: directory
+
+      - name: Configurando driver para ejecutar ContainerD en SystemD
+        ansible.builtin.copy:
+          src: files/config.toml
+          dest: /etc/containerd/config.toml  # link to /path/to/file
+          follow: yes
+        notify: 
+          - reiniciando containerd
+
+      - name: Iniciando servicio ContainerD
+        service:
+          name: containerd
+          enabled: true
+          state: started
+  
+      # - name: Agregando el usuario centos al grupo docker
+      #   ansible.builtin.user:
+      #     name: centos
+      #     shell: /bin/bash
+      #     groups: docker
+      #     append: yes
+
+      - name: Agregando modulo overlay
+        community.general.modprobe:
+          name: overlay
+          state: present
+
+      - name: Agregando modulo netfilter
+        community.general.modprobe:
+          name: br_netfilter
+          state: present
+      
+      - ansible.posix.sysctl:
+          name: net.bridge.bridge-nf-call-ip6tables
+          value: '1'
+          sysctl_set: yes
+          state: present
+          reload: yes
+      
+      - ansible.posix.sysctl:
+          name: net.bridge.bridge-nf-call-iptables
+          value: '1'
+          sysctl_set: yes
+          state: present
+          reload: yes
+      
+      - ansible.posix.sysctl:
+          name: net.ipv4.ip_forward
+          value: '1'
+          sysctl_set: yes
+          state: present
+          reload: yes
+
+      - name: Añandiendo repositorio Kubernetes
+        yum_repository:
+          name: kubernetes
+          description: "Repositorio Oficial de Kubernetes - $basearch"
+          baseurl: "https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64"
+          enabled: yes
+          repo_gpgcheck: yes
+          gpgcheck: yes
+          gpgkey: https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+
+      - name: Instalando Kubernetes kubeadm, kubelet y kubectl
+        dnf:
+          name: 
+            - kubeadm 
+            - kubelet
+            - kubectl
+          state: present
+          allowerasing: yes
+
+      - name: Prevenir que se actualicen a versiones superiores paquetes de Kubernetes
+        community.general.yum_versionlock:
+          state: present
+          name:
+            - kubeadm 
+            - kubelet
+            - kubectl
+      
+      - name: Habilitando servicio kubelet
+        service:
+          name: kubelet
+          enabled: true
+
+      - name: Habilitando autenticacion ssh con password
+        ansible.builtin.lineinfile:
+          path: /etc/ssh/sshd_config 
+          regexp: '^PasswordAuthentication'
+          line: PasswordAuthentication yes
+        notify:
+          - reiniciando sshd
+
+      - name: Habilitando login con root
+        ansible.builtin.lineinfile:
+          path: /etc/ssh/sshd_config 
+          regexp: '^PermitRootLogin'
+          line: PermitRootLogin yes
+        notify:
+          - reiniciando sshd
+      
+    handlers:
+      - name: reiniciando containerd
+        service:
+          name: containerd
+          state: restarted
+      
+      - name: reiniciando sshd
+        service:
+          name: sshd
+          state: restarted
+      
+      - name: reiniciando sistema
+        reboot:
+          msg: "Reiniciando sistema"
+          connect_timeout: 5
+          reboot_timeout: 600
+          pre_reboot_delay: 0
+          post_reboot_delay: 30
+          test_command: whoami

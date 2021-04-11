@@ -1,0 +1,47 @@
+---
+  - hosts: workers
+    remote_user: centos
+    become: yes
+    tasks:
+      - name: Habilitando puertos en FirewallD
+        ansible.posix.firewalld:
+          port: "{{ item }}"
+          permanent: yes
+          state: enabled
+        loop:
+          - 10250/tcp
+          - 30000-32767/tcp
+          - 5473/tcp
+          - 179/tcp
+          - 4789/udp
+          - 8285/udp
+          - 8472/udp
+        notify: reiniciando firewalld
+    
+      - name: Instalando sshpass 
+        dnf: 
+          name: 
+            - sshpass 
+          state: present
+        
+      - name: Copiando archivo joincluster a los workers
+        shell:
+          cmd: |
+            sshpass -p "centos" scp -o StrictHostKeyChecking=no master.home.lab:/joincluster.sh /joincluster.sh
+      
+      - name: Uniendo worker al master
+        shell:
+          cmd: |
+            bash /joincluster.sh >/dev/null 2>&1
+      
+    handlers:
+      - name: reiniciando firewalld
+        systemd:
+          name: firewalld
+          state: reloaded
+
+      
+      
+
+
+

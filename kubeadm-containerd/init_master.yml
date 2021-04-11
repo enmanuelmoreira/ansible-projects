@@ -1,0 +1,62 @@
+---
+  - hosts: masters
+    remote_user: centos
+    become: yes
+    vars:
+      apiserver: "172.10.10.100"
+      pod_network: "192.168.0.0/16"
+      calico_manifest: "https://docs.projectcalico.org/v3.17/manifests/calico.yaml" 
+    tasks:
+      - name: Habilitando puertos en FirewallD
+        ansible.posix.firewalld:
+          port: "{{ item }}"
+          permanent: yes
+          state: enabled
+        loop:
+          - 6443/tcp
+          - 2379-2380/tcp
+          - 10250/tcp
+          - 10251/tcp
+          - 10252/tcp
+          - 5473/tcp
+          - 179/tcp
+          - 4789/udp
+          - 8285/udp
+          - 8472/udp
+        notify: reiniciando firewalld
+
+      - name: Inicializando el cluster de Kubernetes
+        shell:
+          cmd: |
+            kubeadm init --apiserver-advertise-address={{ apiserver }} --pod-network-cidr={{ pod_network }} >> /root/kubeinit.log 2>/dev/null
+      
+      - name: Creando directorio .kube en el home del usuario centos
+        ansible.builtin.file:
+          path: /home/centos/.kube
+          state: directory
+
+      - name: Comprobando que el archivo admin.conf existe.
+        stat:
+          path: /etc/kubernetes/admin.conf
+      
+      - name: Copiando archivo de configuracion
+        ansible.builtin.copy:
+          src: /etc/kubernetes/admin.conf
+          dest: /home/centos/.kube/config
+          remote_src: yes
+
+      - name: Desplegando la red Calico
+        shell:
+          cmd: |
+            su - centos -c "kubectl create -f {{ calico_manifest }}"
+    
+      - name: Generando y guardando el comando para unir a los nodos a /joincluster.sh
+        shell:
+          cmd: | 
+            kubeadm token create --print-join-command > /joincluster.sh
+    
+    handlers:
+      - name: reiniciando firewalld
+        systemd:
+          name: firewalld
+          state: reloaded
